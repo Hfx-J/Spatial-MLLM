@@ -174,6 +174,7 @@ class SpatialMLLMForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):
         # if we get 4D attention mask we cannot calculate rope deltas anymore. TODO @raushan fixme
         if position_ids is None and (attention_mask is None or attention_mask.ndim == 2):
             # calculate RoPE index once per generation in the pre-fill stage only
+            # 计算旋转位置编码的增量只在生成的预填充阶段进行一次
             if (
                 (cache_position is not None and cache_position[0] == 0)
                 or self.rope_deltas is None

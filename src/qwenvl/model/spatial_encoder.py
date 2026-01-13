@@ -87,6 +87,7 @@ class VGGTSpatialEncoderPreTrainedModel(PreTrainedModel):
             tensors = [item[1] for item in items]
         
             batch_input = torch.stack(tensors) 
+            # 直接将VGGT中的aggregator拿出来用，先使用这个来选择关键帧
             batch_out, batch_start_idx = self.vggt_model.aggregator(batch_input)            
             B_curr = len(indices)
             
