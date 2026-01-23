@@ -6,7 +6,9 @@ import numpy as np
 import torch
 import tyro
 from PIL import Image
-
+# import os
+os.environ['HF_HUB_OFFLINE'] = '1'
+os.environ['TRANSFORMERS_OFFLINE'] = '1'
 # add workspace to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -117,6 +119,8 @@ def main(
 
     # Preparation for inference
     prompts_text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    print("Prompt Text:", prompts_text)
+    
     image_inputs, video_inputs = process_vision_info(messages)
     batch = processor(
         text=[prompts_text],

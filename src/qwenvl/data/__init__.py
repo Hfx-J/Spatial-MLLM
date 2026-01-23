@@ -19,39 +19,39 @@ REPO_PATH = find_repo_path()
 
 ### Spatial-MLLM-Mix Data
 SPATIAL_MLLM_MIX_133K = {
-    "annotation_path": os.path.join(REPO_PATH, "datasets/annotations/spatial-mllm-mix-133k.jsonl"),
+    "annotation_path": os.path.join(REPO_PATH, "datasets/train/spatail_mllm_data/annotation/spatial-mllm-mix-133k.jsonl"),
     "data_path": os.path.join(REPO_PATH, "datasets/visuals"),
 }
 
 SPATIAL_MLLM_MIX_203K = {
-    "annotation_path": os.path.join(REPO_PATH, "datasets/annotations/spatial-mllm-mix-203k.jsonl"),
+    "annotation_path": os.path.join(REPO_PATH, "datasets/train/spatail_mllm_data/annotation/spatial-mllm-mix-203k.jsonl"),
     "data_path": os.path.join(REPO_PATH, "datasets/visuals"),
 }
 
 # Route Plan Data From VLM-3R
 ROUTE_PLAN_SCANNET_2K = {
     "annotation_path": os.path.join(
-        REPO_PATH, "datasets/annotations/routeplan-2k.jsonl"
+        REPO_PATH, "datasets/train/spatail_mllm_data/annotation/routeplan-2k.jsonl"
     ),
     "data_path": os.path.join(REPO_PATH, "datasets/visuals")
 }
 
 ROUTE_PLAN_4K = {
     "annotation_path": os.path.join(
-        REPO_PATH, "datasets/annotations/routeplan-4k.jsonl"
+        REPO_PATH, "datasets/train/spatail_mllm_data/annotation/routeplan-4k.jsonl"
     ),
     "data_path": os.path.join(REPO_PATH, "datasets/visuals")
 }
 
 ### VSI-590K Data From Cambrian-S
 VSI_590K = {
-    "annotation_path": os.path.join(REPO_PATH, "datasets/annotations/vsi-590k-processed.jsonl"),
+    "annotation_path": os.path.join(REPO_PATH, "datasets/train/spatail_mllm_data/annotation/vsi-590k-processed.jsonl"),
     "data_path": os.path.join(REPO_PATH, "datasets/visuals"),
 }
 
 ### MindCube Data
 MINDCUBE_21K = {
-    "annotation_path": os.path.join(REPO_PATH, "datasets/annotations/mindcube-processed.jsonl"),
+    "annotation_path": os.path.join(REPO_PATH, "datasets/train/spatail_mllm_data/annotation/mindcube-processed.jsonl"),
     "data_path": os.path.join(REPO_PATH, "datasets/visuals"),
 }
 

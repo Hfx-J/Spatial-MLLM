@@ -37,7 +37,7 @@ grad_accum_steps=8
 entry_file=src/qwenvl/train/train_qwen.py
 
 # Dataset configuration
-datasets="spatial_mllm_mix_133k,route_plan_scannet_2k"
+datasets="spatial_mllm_mix_133k"
 
 # Data configuration
 max_pixels=324576
@@ -98,7 +98,7 @@ args="
     --report_to wandb"
 
 # Launch training
-torchrun --nproc_per_node=6 \
+torchrun --nproc_per_node=4 \
          --master_addr=${MASTER_ADDR} \
          --master_port=${MASTER_PORT} \
          ${entry_file} ${args} 2>&1 | tee -a "${logfile}"
