@@ -29,7 +29,7 @@ class SpatialMLLMForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):
         super().__init__(config)
         self.spatial_encoder = VGGTSpatialEncoderPreTrainedModel(config.spatial_config)
         self.connector = get_connector(config)
-
+        
         # Initialize weights and apply final processing
         self.post_init()
 
@@ -158,6 +158,12 @@ class SpatialMLLMForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):
                 print(f"pixel_values_videos: {pixel_values_videos.shape}")
                 print(f"video_embeds shape: {video_embeds.shape}")
                 print(f"spatial_embeds_list lengths: {len(spatial_embeds_list)},{len(spatial_embeds_list[0])},{spatial_embeds_list[0][0].shape}")
+                print(f"spatial_embeds_list 7 shape: {spatial_embeds_list[0][7].shape}")
+                print(f"spatial_embeds_list 11 shape: {spatial_embeds_list[0][11].shape}")
+                print(f"spatial_embeds_list 14 shape: {spatial_embeds_list[0][14].shape}")
+                print(f"spatial_embeds_list 23 shape: {spatial_embeds_list[0][23].shape}")
+
+
 
 
                 # fuse video and spatial embeddings
@@ -167,6 +173,7 @@ class SpatialMLLMForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):
                     patch_start_idx=patch_start_idx,
                     grid_thw=video_grid_thw,
                 )
+                # fused_embeds = video_embeds
                 print(f"fused_embeds shape: {fused_embeds.shape}")
                 mask = input_ids == self.config.video_token_id
                 mask_unsqueezed = mask.unsqueeze(-1)

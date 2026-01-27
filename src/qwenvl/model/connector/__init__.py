@@ -1,4 +1,4 @@
-from .mlp_add_connector import MLPAddConnector
+from .mlp_add_connector import MLPAddConnector,DPTConnector
 
 def get_connector(config):
     """
@@ -8,7 +8,12 @@ def get_connector(config):
     Returns:
         Connector class corresponding to the specified type.
     """
-    if config.connector_config["connector_type"] == "mlp_add":
+    return DPTConnector(
+        vggt_dim=config.spatial_config.embed_dim * 2,
+        language_dim=config.hidden_size,
+    )
+
+    if config.connector_config["connector_type"] == "mlp_add" :
         return MLPAddConnector(
             vggt_dim=config.spatial_config.embed_dim,
             language_dim=config.hidden_size,
@@ -16,6 +21,12 @@ def get_connector(config):
             visual_temporal_merge_size=config.vision_config.temporal_patch_size,
             visual_spatial_merge_size=config.vision_config.spatial_merge_size,
         )
+    elif config.connector_config["connector_type"] == "dpt":
+        return DPTConnector(
+            vggt_dim=config.spatial_config.embed_dim,
+            language_dim=config.hidden_size,
+        )
+
     # elif config.connector_config["connector_type"] == "mlp_cat":
     #     return MLPCatConnector(
     #         vggt_dim=config.spatial_config.embed_dim,
