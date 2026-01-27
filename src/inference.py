@@ -62,6 +62,7 @@ def load_model_and_processor(model_type: str, model_path: str):
         from src.qwenvl.model.spatial_mllm import SpatialMLLMConfig, SpatialMLLMForConditionalGeneration
 
         config = SpatialMLLMConfig.from_pretrained(model_path)
+        # config.spatial_config.embed_dim = 2048  # set embed_dim to 2048
         model = SpatialMLLMForConditionalGeneration.from_pretrained(
             model_path,
             config=config,
