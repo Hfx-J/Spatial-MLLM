@@ -180,3 +180,4 @@ wandb/
 checkpoints/
 results/
 Spatial-MLLM-v1.1-Instruct-135K/
+output/

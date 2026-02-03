@@ -119,7 +119,7 @@ class SpatialMLLMForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):
                 # get spatial embeddings
                 spatial_embeds_list, patch_start_idx = self.spatial_encoder(image_tchw)
 
-                print(f"image_embeds shape: {image_embeds.shape} spatial_embeds_list lengths: {[se.shape for se in spatial_embeds_list]}")
+                # print(f"image_embeds shape: {image_embeds.shape} spatial_embeds_list lengths: {[se.shape for se in spatial_embeds_list]}")
 
                 # fuse video and spatial embeddings
                 fused_embeds = self.connector(
@@ -154,14 +154,14 @@ class SpatialMLLMForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):
                 # get spatial embeddings
                 spatial_embeds_list, patch_start_idx = self.spatial_encoder(video_tchw, grid_thw=video_grid_thw)
 
-                print(f"video_tchw lengths: {len(video_tchw)},{video_tchw[0].shape}")
-                print(f"pixel_values_videos: {pixel_values_videos.shape}")
-                print(f"video_embeds shape: {video_embeds.shape}")
-                print(f"spatial_embeds_list lengths: {len(spatial_embeds_list)},{len(spatial_embeds_list[0])},{spatial_embeds_list[0][0].shape}")
-                print(f"spatial_embeds_list 7 shape: {spatial_embeds_list[0][7].shape}")
-                print(f"spatial_embeds_list 11 shape: {spatial_embeds_list[0][11].shape}")
-                print(f"spatial_embeds_list 14 shape: {spatial_embeds_list[0][14].shape}")
-                print(f"spatial_embeds_list 23 shape: {spatial_embeds_list[0][23].shape}")
+                # print(f"video_tchw lengths: {len(video_tchw)},{video_tchw[0].shape}")
+                # print(f"pixel_values_videos: {pixel_values_videos.shape}")
+                # print(f"video_embeds shape: {video_embeds.shape}")
+                # print(f"spatial_embeds_list lengths: {len(spatial_embeds_list)},{len(spatial_embeds_list[0])},{spatial_embeds_list[0][0].shape}")
+                # print(f"spatial_embeds_list 7 shape: {spatial_embeds_list[0][7].shape}")
+                # print(f"spatial_embeds_list 11 shape: {spatial_embeds_list[0][11].shape}")
+                # print(f"spatial_embeds_list 14 shape: {spatial_embeds_list[0][14].shape}")
+                # print(f"spatial_embeds_list 23 shape: {spatial_embeds_list[0][23].shape}")
 
 
 
@@ -174,7 +174,7 @@ class SpatialMLLMForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):
                     grid_thw=video_grid_thw,
                 )
                 # fused_embeds = video_embeds
-                print(f"fused_embeds shape: {fused_embeds.shape}")
+                # print(f"fused_embeds shape: {fused_embeds.shape}")
                 mask = input_ids == self.config.video_token_id
                 mask_unsqueezed = mask.unsqueeze(-1)
                 mask_expanded = mask_unsqueezed.expand_as(inputs_embeds)

@@ -121,7 +121,14 @@ class DPTConnector(nn.Module):
         
         # 采用残差连接 + Norm 返回
         return self.final_norm(video_embeds + fused)
-    
+    def print_trainable_parameters(self) -> None:
+        """
+        打印连接器各部分的训练状态
+        """
+        is_connector_trainable = any(param.requires_grad for param in self.parameters())
+        print(f"MLPAddConnector 可训练状态: {is_connector_trainable}")
+
+        
 class MLPAddConnector(nn.Module):
 
     """

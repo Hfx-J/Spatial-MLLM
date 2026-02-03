@@ -3,10 +3,12 @@ set -euo pipefail
 
 # Set environment variables
 # export WANDB_BASE_URL="https://api.bandw.top"
-export WANDB_API_KEY=YOUR_WANDB_API_KEY  # Replace with your WandB API key 
-export WANDB_PROJECT="Spatial-MLLM-SFT"
-export WANDB_ENTITY=YOUR_WANDB_ENTITY  # Replace with your WandB entity/team name
-
+# export WANDB_MODE=offline
+# export WANDB_API_KEY="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"  # Replace with your WandB API key 
+# export WANDB_PROJECT="Spatial-MLLM-SFT"
+# export WANDB_ENTITY=YOUR_WANDB_ENTITY  # Replace with your WandB entity/team name
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export CUDA_LAUNCH_BLOCKING=0  # 确保异步执行
 export NCCL_P2P_DISABLE=1
 export NCCL_IB_DISABLE=1
 
@@ -31,7 +33,7 @@ mm_projector_lr=2e-5
 weight_decay=0.1
 max_grad_norm=1.0
 batch_size=1 
-grad_accum_steps=8
+grad_accum_steps=4
 
 # Training entry point
 entry_file=src/qwenvl/train/train_qwen.py
@@ -70,7 +72,7 @@ args="
     --tune_mm_llm True \
     --bf16 \
     --output_dir ${output_dir} \
-    --num_train_epochs 1 \
+    --num_train_epochs 2 \
     --per_device_train_batch_size ${batch_size} \
     --per_device_eval_batch_size $((batch_size*2)) \
     --gradient_accumulation_steps ${grad_accum_steps} \
@@ -92,13 +94,13 @@ args="
     --lr_scheduler_type "cosine" \
     --logging_steps 1 \
     --model_max_length 8192 \
-    --gradient_checkpointing False \
+    --gradient_checkpointing True \
     --dataloader_num_workers 8 \
     --run_name ${run_name} \
     --report_to wandb"
 
 # Launch training
-torchrun --nproc_per_node=4 \
+torchrun --nproc_per_node=8 \
          --master_addr=${MASTER_ADDR} \
          --master_port=${MASTER_PORT} \
          ${entry_file} ${args} 2>&1 | tee -a "${logfile}"
