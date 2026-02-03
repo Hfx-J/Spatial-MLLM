@@ -91,7 +91,7 @@ def _load_with_decord(video_path: str, num_frames: int) -> list:
 
     # 均匀采样 num_frames 帧的索引
     indices = np.linspace(0, total_frames - 1, num_frames, dtype=int).tolist()
-    frames_np = vr.batch_get_index(indices).asnumpy()  # (N, H, W, 3)
+    frames_np = vr.get_batch(indices).asnumpy()  # (N, H, W, 3)
 
     return [Image.fromarray(f) for f in frames_np]
 

@@ -25,7 +25,7 @@ import numpy as np
 from io import BytesIO
 from pathlib import Path
 from collections import defaultdict
-
+from tqdm import tqdm
 from openai import AsyncOpenAI
 
 sys.path.append(str(Path(__file__).resolve().parents[0]))
@@ -259,7 +259,7 @@ async def _build_cold_start_async(
     scored_items = []
     t0 = time.time()
 
-    for idx, item in enumerate(subset):
+    for idx, item in tqdm(enumerate(subset)):
         if idx % 50 == 0:
             elapsed = time.time() - t0
             eta = (elapsed / max(idx, 1)) * (len(subset) - idx)
