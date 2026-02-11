@@ -28,8 +28,8 @@ connector_type=mlp_add
 pretrained_model_name_or_path=checkpoints/Qwen2.5-VL-3B-Instruct  # Using HuggingFace model ID
 
 # Training hyperparameters
-lr=7e-6
-mm_projector_lr=2e-5
+lr=3e-6
+mm_projector_lr=1e-5
 weight_decay=0.1
 max_grad_norm=1.0
 batch_size=1 
@@ -89,7 +89,7 @@ args="
     --learning_rate ${lr} \
     --mm_projector_lr ${mm_projector_lr} \
     --weight_decay ${weight_decay} \
-    --warmup_ratio 0.03 \
+    --warmup_ratio 0.05 \
     --max_grad_norm ${max_grad_norm} \
     --lr_scheduler_type "cosine" \
     --logging_steps 1 \
