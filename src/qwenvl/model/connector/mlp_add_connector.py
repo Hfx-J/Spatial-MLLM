@@ -20,7 +20,6 @@ from transformers.models.qwen2.modeling_qwen2 import Qwen2RMSNorm
 
 # 假设 FeatureFusionBlock, _make_fusion_block, custom_interpolate 已经从之前提供的 dpt_head.py 导入
 # 如果在同一个文件，请确保它们在类定义之前
-
 class DPTConnector(nn.Module):
     def __init__(
         self,
@@ -29,15 +28,28 @@ class DPTConnector(nn.Module):
         features: int = 256,
         out_channels: List[int] = [256, 512, 1024, 2048],
         layer_indices: List[int] = [7, 11, 14, 23],
+        visual_temporal_merge_size: int = 2,  # 与 QwenVL 一致
+        visual_spatial_merge_size: int = 2,   # 与 QwenVL 一致
+        dpt_nframes: int = 16,                # DPT/VGGT 实际处理的帧数
     ) -> None:
         super().__init__()
         self.layer_indices = layer_indices
-        
-        # ========== 新增：输入归一化 ==========
+        self.visual_temporal_merge_size = visual_temporal_merge_size
+        self.visual_spatial_merge_size = visual_spatial_merge_size
+        self.dpt_nframes = dpt_nframes
+
+        # merge 后扩展的通道数：features * tm * sm^2
+        self.merged_dim = (
+            features
+            * visual_temporal_merge_size
+            * visual_spatial_merge_size ** 2
+        )
+
+        # ========== 输入归一化 ==========
         self.input_norms = nn.ModuleList([
             nn.LayerNorm(vggt_dim) for _ in out_channels
         ])
-        
+
         # 1. 投影层
         self.projects = nn.ModuleList([
             nn.Conv2d(vggt_dim, oc, kernel_size=1) for oc in out_channels
@@ -54,107 +66,300 @@ class DPTConnector(nn.Module):
         self.refinenet3 = _make_fusion_block(features)
         self.refinenet4 = _make_fusion_block(features, has_residual=False)
 
-        # 4. 降采样模块
-        self.temporal_spatial_pool = nn.AvgPool3d(kernel_size=(2, 2, 2), stride=(2, 2, 2))
-
-        # 5. 投影到语言空间
-        self.output_conv = nn.Sequential(
-            nn.Conv2d(features, features // 2, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(features // 2, language_dim, kernel_size=1)
+        # 4. QwenVL 风格 merge 后的投影
+        self.ln_q = Qwen2RMSNorm(self.merged_dim, eps=1e-6)
+        self.output_proj = nn.Sequential(
+            nn.Linear(self.merged_dim, self.merged_dim),
+            nn.GELU(),
+            nn.Linear(self.merged_dim, language_dim),
         )
 
-        # ========== 新增：输出归一化 ==========
+        # ========== 输出归一化 ==========
         self.dpt_out_norm = nn.LayerNorm(language_dim)
 
-        # 6. 拼接融合层
+        # 5. 门控融合
         self.fusion_proj = nn.Linear(language_dim * 2, language_dim)
         self.final_norm = Qwen2RMSNorm(language_dim, eps=1e-6)
-
-        # ========== 新增：可学习门控，初始为 0 ==========
         self.gate = nn.Parameter(torch.zeros(1))
-        
-        # ========== 关键：初始化 ==========
+
         self._init_weights()
 
     def _init_weights(self):
-        """稳定初始化，防止梯度爆炸"""
-        # 零初始化最终融合层，训练初期不破坏原有特征
         nn.init.zeros_(self.fusion_proj.weight)
         nn.init.zeros_(self.fusion_proj.bias)
-        
-        # 小方差初始化投影层
         for proj in self.projects:
             nn.init.normal_(proj.weight, std=0.01)
             if proj.bias is not None:
                 nn.init.zeros_(proj.bias)
-        
-        # 小方差初始化 rn_layers
         for rn in self.rn_layers:
             nn.init.normal_(rn.weight, std=0.01)
-        
-        # output_conv 最后一层零初始化
-        nn.init.zeros_(self.output_conv[-1].weight)
-        nn.init.zeros_(self.output_conv[-1].bias)
+        nn.init.zeros_(self.output_proj[-1].weight)
+        nn.init.zeros_(self.output_proj[-1].bias)
+
+    def _frame_subsample(self, x: torch.Tensor, t_target: int) -> torch.Tensor:
+        """
+        对 DPT 输出的帧维度做跳帧采样，使其与 QwenVL 处理的帧数对齐。
+
+        Args:
+            x:        [T_dpt, C, H, W]，DPT refinenet 输出
+            t_target: QwenVL 对应的帧数（来自 grid_thw 的 t_orig）
+
+        Returns:
+            x_sub:    [t_target, C, H, W]
+        """
+        T_dpt = x.shape[0]
+        if T_dpt == t_target:
+            return x  # 帧数已对齐，不需要跳帧
+
+        assert T_dpt % t_target == 0, (
+            f"DPT 帧数 {T_dpt} 不能被 QwenVL 帧数 {t_target} 整除，"
+            f"无法做均匀跳帧。"
+        )
+        stride = T_dpt // t_target
+        # 均匀采样：取第 0, stride, 2*stride, ... 帧
+        indices = torch.arange(0, T_dpt, stride, device=x.device)
+        return x[indices]   # [t_target, C, H, W]
+
+    def _qwenvl_merge(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        QwenVL 风格时空 merge（与 MLPAddConnector.preprocess_spatial_embeds 逻辑一致）。
+
+        Args:
+            x: [T, C, H, W]，跳帧后与 QwenVL 对齐的帧序列
+
+        Returns:
+            merged: [T//tm * H//sm * W//sm, C * tm * sm^2]
+        """
+        tm = self.visual_temporal_merge_size
+        sm = self.visual_spatial_merge_size
+        T, C, H, W = x.shape
+
+        assert T % tm == 0, f"T={T} 不能被 temporal_merge_size={tm} 整除"
+        assert H % sm == 0 and W % sm == 0, (
+            f"H={H} 或 W={W} 不能被 spatial_merge_size={sm} 整除"
+        )
+
+        # [T, C, H, W] -> [T, H, W, C]
+        x = x.permute(0, 2, 3, 1).contiguous()
+
+        # 分解合并维度
+        x = x.view(
+            T // tm,        # 合并后时间步
+            tm,             # 时间合并块
+            H // sm,        # 合并后空间高
+            sm,             # 空间合并块（高）
+            W // sm,        # 合并后空间宽
+            sm,             # 空间合并块（宽）
+            C,
+        )
+
+        # 将合并块挪到 channel 末尾（与 QwenVL 完全一致）
+        x = x.permute(0, 2, 4, 6, 1, 3, 5).contiguous()
+
+        # 展平为 token 序列
+        x = x.reshape(
+            (T // tm) * (H // sm) * (W // sm),
+            C * tm * sm * sm,
+        )
+        return x  # [N_tokens, merged_dim]
 
     def forward(
         self,
         video_embeds: torch.Tensor,
-        spatial_embeds_list: List[torch.Tensor], 
+        spatial_embeds_list: List[torch.Tensor],
         grid_thw: torch.Tensor,
-        patch_start_idx: Union[int, List[int], torch.Tensor]
+        patch_start_idx: Union[int, List[int], torch.Tensor],
     ) -> torch.Tensor:
         # A. 参数预处理
-        p_start = patch_start_idx[0] if isinstance(patch_start_idx, (list, torch.Tensor)) else patch_start_idx
+        p_start = (
+            patch_start_idx[0]
+            if isinstance(patch_start_idx, (list, torch.Tensor))
+            else patch_start_idx
+        )
+        # t_orig：QwenVL 实际处理的帧数（进入 merge 前）
         t_orig, h_orig, w_orig = grid_thw[0].tolist()
-        
-        # B. 提取多尺度特征并还原空间结构
+
+        # B. 提取多尺度特征，还原空间结构
+        #    注意：这里 x 的 batch 维度对应 DPT 的 dpt_nframes 帧
         layers_features = []
         for i, idx in enumerate(self.layer_indices):
-            x = spatial_embeds_list[0][idx][:, p_start:]
-            
-            # ========== 新增：先归一化 ==========
+            x = spatial_embeds_list[0][idx][:, p_start:]  # [T_dpt, P, D]
             x = self.input_norms[i](x)
-            
+            # 用 h_orig/w_orig 还原空间结构（DPT 和 QwenVL 空间分辨率相同）
             x = x.transpose(1, 2).reshape(-1, x.shape[-1], h_orig, w_orig)
+            # x: [T_dpt, D, H, W]
             x = self.projects[i](x)
             x = self.rn_layers[i](x)
             layers_features.append(x)
 
-        # C. 级联融合
+        # C. 级联融合（DPT refinenet）
         l1, l2, l3, l4 = layers_features
         target_size = (h_orig, w_orig)
-        
+
         path4 = self.refinenet4(l4, size=target_size)
         path3 = self.refinenet3(path4, l3, size=target_size)
         path2 = self.refinenet2(path3, l2, size=target_size)
         path1 = self.refinenet1(path2, l1, size=target_size)
+        # path1: [T_dpt, features, H, W]，T_dpt=16
 
-        # D. 时空降采样
-        fused_3d = path1.view(-1, *path1.shape[1:]).transpose(0, 1)
-        fused_3d = self.temporal_spatial_pool(fused_3d)
-        
-        # E. 映射到语言空间
-        c_f, t_new, h_new, w_new = fused_3d.shape
-        fused_2d = fused_3d.transpose(1, 2).reshape(-1, c_f, h_new, w_new)
-        dpt_out = self.output_conv(fused_2d)
-        dpt_out = dpt_out.flatten(2).transpose(1, 2).reshape(-1, dpt_out.shape[1])
-        
-        # ========== 新增：输出归一化 ==========
+        # D. 【跳帧】将 DPT 的 T_dpt 帧降采样到 QwenVL 的 t_orig 帧
+        #    stride = T_dpt / t_orig = 16 / 8 = 2，即每隔一帧取一帧
+        path1 = self._frame_subsample(path1, t_target=int(t_orig))
+        # path1: [t_orig, features, H, W]，t_orig=8
+
+        # E. QwenVL 风格时空 merge
+        dpt_out = self._qwenvl_merge(path1)
+        # dpt_out: [t_orig//tm * H//sm * W//sm, features * tm * sm^2]
+        # token 数量与 video_embeds 完全对齐 ✓
+
+        # F. 归一化 + 投影到语言空间
+        dpt_out = self.ln_q(dpt_out)
+        dpt_out = self.output_proj(dpt_out)   # [N_tokens, language_dim]
         dpt_out = self.dpt_out_norm(dpt_out)
-        
-        # F. 最终融合
+
+        # G. 门控残差融合
         combined = torch.cat([video_embeds, dpt_out], dim=-1)
         fused = self.fusion_proj(combined)
-        
-        # ========== 关键修改：门控残差连接 ==========
-        # tanh(gate) 初始接近 0，训练过程中逐渐学习合适的缩放
         return self.final_norm(video_embeds + torch.tanh(self.gate) * fused)
 
     def print_trainable_parameters(self) -> None:
         is_connector_trainable = any(param.requires_grad for param in self.parameters())
         print(f"DPTConnector 可训练状态: {is_connector_trainable}")
         print(f"当前 gate 值: {self.gate.item():.4f}, tanh(gate): {torch.tanh(self.gate).item():.4f}")
+# class DPTConnector(nn.Module):
+#     def __init__(
+#         self,
+#         vggt_dim: int = 2048,
+#         language_dim: int = 2048,
+#         features: int = 256,
+#         out_channels: List[int] = [256, 512, 1024, 2048],
+#         layer_indices: List[int] = [7, 11, 14, 23],
+#     ) -> None:
+#         super().__init__()
+#         self.layer_indices = layer_indices
+        
+#         # ========== 新增：输入归一化 ==========
+#         self.input_norms = nn.ModuleList([
+#             nn.LayerNorm(vggt_dim) for _ in out_channels
+#         ])
+        
+#         # 1. 投影层
+#         self.projects = nn.ModuleList([
+#             nn.Conv2d(vggt_dim, oc, kernel_size=1) for oc in out_channels
+#         ])
+
+#         # 2. 映射到 DPT 内部通道数
+#         self.rn_layers = nn.ModuleList([
+#             nn.Conv2d(oc, features, kernel_size=3, padding=1, bias=False) for oc in out_channels
+#         ])
+
+#         # 3. 级联融合模块
+#         self.refinenet1 = _make_fusion_block(features)
+#         self.refinenet2 = _make_fusion_block(features)
+#         self.refinenet3 = _make_fusion_block(features)
+#         self.refinenet4 = _make_fusion_block(features, has_residual=False)
+
+#         # 4. 降采样模块
+#         self.temporal_spatial_pool = nn.AvgPool3d(kernel_size=(2, 2, 2), stride=(2, 2, 2))
+
+#         # 5. 投影到语言空间
+#         self.output_conv = nn.Sequential(
+#             nn.Conv2d(features, features // 2, kernel_size=3, padding=1),
+#             nn.ReLU(inplace=True),
+#             nn.Conv2d(features // 2, language_dim, kernel_size=1)
+#         )
+
+#         # ========== 新增：输出归一化 ==========
+#         self.dpt_out_norm = nn.LayerNorm(language_dim)
+
+#         # 6. 拼接融合层
+#         self.fusion_proj = nn.Linear(language_dim * 2, language_dim)
+#         self.final_norm = Qwen2RMSNorm(language_dim, eps=1e-6)
+
+#         # ========== 新增：可学习门控，初始为 0 ==========
+#         self.gate = nn.Parameter(torch.zeros(1))
+        
+#         # ========== 关键：初始化 ==========
+#         self._init_weights()
+
+#     def _init_weights(self):
+#         """稳定初始化，防止梯度爆炸"""
+#         # 零初始化最终融合层，训练初期不破坏原有特征
+#         nn.init.zeros_(self.fusion_proj.weight)
+#         nn.init.zeros_(self.fusion_proj.bias)
+        
+#         # 小方差初始化投影层
+#         for proj in self.projects:
+#             nn.init.normal_(proj.weight, std=0.01)
+#             if proj.bias is not None:
+#                 nn.init.zeros_(proj.bias)
+        
+#         # 小方差初始化 rn_layers
+#         for rn in self.rn_layers:
+#             nn.init.normal_(rn.weight, std=0.01)
+        
+#         # output_conv 最后一层零初始化
+#         nn.init.zeros_(self.output_conv[-1].weight)
+#         nn.init.zeros_(self.output_conv[-1].bias)
+
+#     def forward(
+#         self,
+#         video_embeds: torch.Tensor,
+#         spatial_embeds_list: List[torch.Tensor], 
+#         grid_thw: torch.Tensor,
+#         patch_start_idx: Union[int, List[int], torch.Tensor]
+#     ) -> torch.Tensor:
+#         # A. 参数预处理
+#         p_start = patch_start_idx[0] if isinstance(patch_start_idx, (list, torch.Tensor)) else patch_start_idx
+#         t_orig, h_orig, w_orig = grid_thw[0].tolist()
+        
+#         # B. 提取多尺度特征并还原空间结构
+#         layers_features = []
+#         for i, idx in enumerate(self.layer_indices):
+#             x = spatial_embeds_list[0][idx][:, p_start:]
+            
+#             # ========== 新增：先归一化 ==========
+#             x = self.input_norms[i](x)
+            
+#             x = x.transpose(1, 2).reshape(-1, x.shape[-1], h_orig, w_orig)
+#             x = self.projects[i](x)
+#             x = self.rn_layers[i](x)
+#             layers_features.append(x)
+
+#         # C. 级联融合
+#         l1, l2, l3, l4 = layers_features
+#         target_size = (h_orig, w_orig)
+        
+#         path4 = self.refinenet4(l4, size=target_size)
+#         path3 = self.refinenet3(path4, l3, size=target_size)
+#         path2 = self.refinenet2(path3, l2, size=target_size)
+#         path1 = self.refinenet1(path2, l1, size=target_size)
+
+#         # D. 时空降采样
+#         fused_3d = path1.view(-1, *path1.shape[1:]).transpose(0, 1)
+#         fused_3d = self.temporal_spatial_pool(fused_3d)
+        
+#         # E. 映射到语言空间
+#         c_f, t_new, h_new, w_new = fused_3d.shape
+#         fused_2d = fused_3d.transpose(1, 2).reshape(-1, c_f, h_new, w_new)
+#         dpt_out = self.output_conv(fused_2d)
+#         dpt_out = dpt_out.flatten(2).transpose(1, 2).reshape(-1, dpt_out.shape[1])
+        
+#         # ========== 新增：输出归一化 ==========
+#         dpt_out = self.dpt_out_norm(dpt_out)
+        
+#         # F. 最终融合
+#         combined = torch.cat([video_embeds, dpt_out], dim=-1)
+#         fused = self.fusion_proj(combined)
+        
+#         # ========== 关键修改：门控残差连接 ==========
+#         # tanh(gate) 初始接近 0，训练过程中逐渐学习合适的缩放
+#         return self.final_norm(video_embeds + torch.tanh(self.gate) * fused)
+
+#     def print_trainable_parameters(self) -> None:
+#         is_connector_trainable = any(param.requires_grad for param in self.parameters())
+#         print(f"DPTConnector 可训练状态: {is_connector_trainable}")
+#         print(f"当前 gate 值: {self.gate.item():.4f}, tanh(gate): {torch.tanh(self.gate).item():.4f}")
 
         
 class MLPAddConnector(nn.Module):

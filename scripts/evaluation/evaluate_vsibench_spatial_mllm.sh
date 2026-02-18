@@ -6,7 +6,7 @@ cd ../..
 OUTPUT_ROOT="results/vsibench"
 mkdir -p "$OUTPUT_ROOT"
 
-MODEL_PATH="checkpoints/Spatial-MLLM-v1.1-Instruct-135K"
+MODEL_PATH="checkpoints/Spatial-MLLM-v1.1-Instruct-hfx"
 MODEL_NAME=$(echo "$MODEL_PATH" | cut -d'/' -f2)
 MODEL_TYPE="spatial-mllm"
 
